@@ -16,11 +16,14 @@ async def get_config(request: Request):
         strategy = request.app.state.bot_engine.strategy
         return {
             "grid_step_pct": strategy.grid_step_pct,
-            "staging_band_pct": strategy.staging_band_pct,
+            "staging_band_depth_pct": strategy.staging_band_pct,
             "max_open_orders": strategy.max_orders,
             "buffer_enabled": strategy.buffer_enabled,
             "buffer_pct": strategy.buffer_pct,
-            # "budget": ... # We don't track budget in strategy yet
+            "profit_mode": getattr(strategy, "profit_mode", "STEP"),
+            "custom_profit_pct": getattr(strategy, "custom_profit_pct", 0.01),
+            "monthly_profit_target_usd": getattr(strategy, "monthly_profit_target_usd", 1000.0),
+            "budget": getattr(strategy, "budget", 1000.0)
         }
     return {"error": "Bot engine not initialized"}
 
@@ -38,7 +41,9 @@ async def update_config(config: ConfigUpdate, request: Request):
             staging_band_depth_pct=config.staging_band_depth_pct,
             buffer_enabled=config.buffer_enabled,
             buffer_pct=config.buffer_pct,
-            profit_mode=config.profit_mode
+            profit_mode=config.profit_mode,
+            custom_profit_pct=config.custom_profit_pct,
+            monthly_profit_target_usd=config.monthly_profit_target_usd
         )
         return {"status": "updated", "config": config}
     

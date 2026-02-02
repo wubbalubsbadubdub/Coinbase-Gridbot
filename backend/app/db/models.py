@@ -13,7 +13,9 @@ class Market(Base):
     __tablename__ = "markets"
     id = Column(String, primary_key=True)  # e.g., "BTC-USD"
     enabled = Column(Boolean, default=False)
-    ranking = Column(Integer, nullable=True)
+    is_favorite = Column(Boolean, default=False)
+    market_rank = Column(Integer, default=999999)
+    volume_24h = Column(Float, default=0.0)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     settings = Column(JSON, nullable=True)  # Market-specific overrides
 

@@ -5,6 +5,9 @@ from datetime import datetime
 class MarketBase(BaseModel):
     id: str
     enabled: bool = False
+    is_favorite: bool = False
+    market_rank: int = 999999
+    volume_24h: float = 0.0
     ranking: int = 0
     settings: Optional[Dict[str, Any]] = None
 
@@ -20,9 +23,11 @@ class ConfigUpdate(BaseModel):
     budget: Optional[float] = None
     max_open_orders: Optional[int] = None
     staging_band_depth_pct: Optional[float] = None
-    profit_mode: Optional[str] = None # "STEP" or "CUSTOM"
+    profit_mode: Optional[str] = None # "STEP", "STEP_REINVEST", "CUSTOM", "SMART_REINVEST"
     buffer_enabled: Optional[bool] = None
     buffer_pct: Optional[float] = None
+    custom_profit_pct: Optional[float] = None
+    monthly_profit_target_usd: Optional[float] = None
 
 class MarketUpdate(BaseModel):
     enabled: Optional[bool] = None
@@ -49,11 +54,14 @@ class OrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class LotResponse(BaseModel):
-    id: str  # fill_id of the entry buy
+    id: int
     market_id: str
+    buy_order_id: str
     buy_price: float
-    size: float
-    buy_timestamp: Optional[datetime] = None
+    buy_size: float
+    buy_time: Optional[datetime] = None
     sell_order_id: Optional[str] = None
+    sell_price: Optional[float] = None
     status: str
+    realized_pnl: float = 0.0
     model_config = ConfigDict(from_attributes=True)

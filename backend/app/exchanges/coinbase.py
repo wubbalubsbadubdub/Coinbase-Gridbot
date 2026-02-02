@@ -61,6 +61,9 @@ class CoinbaseAdapter(ExchangeAdapter):
             except httpx.HTTPStatusError as e:
                 logger.error(f"Coinbase API Error: {e.response.text}")
                 raise
+            except httpx.RequestError as e:
+                logger.error(f"Network Error: {e}")
+                raise # Re-raise for now so engine knows to try again next tick, but log it clearly
 
     async def get_products(self) -> List[Any]:
         # GET /brokerage/products

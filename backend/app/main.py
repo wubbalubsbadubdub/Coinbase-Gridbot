@@ -10,7 +10,7 @@ from app.db import models
 from app.exchanges.coinbase import CoinbaseAdapter
 from app.exchanges.mock import MockAdapter
 from app.bot.engine import BotEngine
-from app.api.routers import markets, bot, orders, lots, config, control, history
+from app.api.routers import markets, bot, orders, lots, config, control, history, seed
 from app.api.websockets import ConnectionManager
 
 # Global Bot Instance and WS Manager
@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
                 if p["id"] not in existing_ids:
                     # Enable mock markets by default for better UX
                     is_enabled = (settings.EXCHANGE_TYPE == "mock")
-                    new_market = models.Market(id=p["id"], enabled=is_enabled, ranking=0)
+                    new_market = models.Market(id=p["id"], enabled=is_enabled, market_rank=0)
                     session.add(new_market)
             
             await session.commit()
@@ -85,6 +85,7 @@ app.include_router(lots.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 app.include_router(control.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
+app.include_router(seed.router, prefix="/api")
 
 @app.get("/healthz")
 async def healthz():

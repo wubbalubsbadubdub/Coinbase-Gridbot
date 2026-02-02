@@ -13,12 +13,20 @@ class GridStrategy:
                  staging_band_pct: float = 0.05, # 5%
                  max_orders: int = 490,
                  buffer_enabled: bool = False,
-                 buffer_pct: float = 0.0):
+                 buffer_pct: float = 0.0,
+                 custom_profit_pct: float = 0.01,
+                 monthly_profit_target_usd: float = 1000.0,
+                 profit_mode: str = "STEP",
+                 budget: float = 1000.0):
         self.grid_step_pct = grid_step_pct
         self.staging_band_pct = staging_band_pct
         self.max_orders = max_orders
         self.buffer_enabled = buffer_enabled
         self.buffer_pct = buffer_pct
+        self.custom_profit_pct = custom_profit_pct
+        self.monthly_profit_target_usd = monthly_profit_target_usd
+        self.profit_mode = profit_mode
+        self.budget = budget
 
     def calculate_new_anchor(self, current_price: float, old_anchor: Optional[float]) -> float:
         """
@@ -56,10 +64,10 @@ class GridStrategy:
         
         # Generate levels downwards
         while level_price > lower_bound:
-            # We only place a buy if it is BELOW current price (with a tiny margin to avoid immediate fill/taker fees if desired, 
-            # but usually just < current_price is enough for a limit order).
+            # We only place a buy if it is BELOW current price 
             if level_price < current_price:
-                buy_levels.append(level_price)
+                # Round to 8 decimals to prevent floating point artifacts
+                buy_levels.append(round(level_price, 8))
             
             # Next level down
             level_price = level_price * (1 - self.grid_step_pct)
@@ -74,7 +82,7 @@ class GridStrategy:
         """
         Mode "Step": Sell Price = Buy Price * (1 + grid_step_pct)
         """
-        return buy_price * (1 + self.grid_step_pct)
+        return round(buy_price * (1 + self.grid_step_pct), 8)
 
     def should_prune(self, order_price: float, current_price: float) -> bool:
         """

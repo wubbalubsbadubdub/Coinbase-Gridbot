@@ -20,10 +20,10 @@ cd coinbase-gridbot
 ```
 
 ## 3. Configuration
-Create a `.env` file in the root directory (or rename `.env.example`):
+Create a `.env` file in the **`backend/`** directory:
 
 ```bash
-# .env
+# backend/.env
 ENV=production
 LOG_LEVEL=INFO
 
@@ -32,40 +32,63 @@ EXCHANGE_TYPE=coinbase
 COINBASE_API_KEY=your_api_key_here
 COINBASE_API_SECRET=your_api_secret_here
 
-# Safety
-LIVE_TRADING_ENABLED=true
+# Safety Settings
+LIVE_TRADING_ENABLED=true   # Enable real trading
+PAPER_MODE=false            # Disable paper trading
 ```
+
+> **Warning**: Double-check `LIVE_TRADING_ENABLED=true` and `PAPER_MODE=false` before deploying. The bot defaults to paper trading mode for safety.
 
 ## 4. Run the Bot
-Use the provided PowerShell script (Windows) or Docker Compose directly (Linux):
 
-**Linux:**
+**Linux/Mac:**
 ```bash
-docker-compose up -d --build
+docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-**Windows:**
+**Windows (PowerShell):**
 ```powershell
 .\manage.ps1 dev
 ```
 
+> **Note**: For production on Linux, consider using `docker compose` (v2) instead of `docker-compose` (v1).
+
 ## 5. Verification
 1.  Open your browser and navigate to `http://YOUR_SERVER_IP:5173`.
 2.  The Dashboard should load.
-3.  Check the **Status Pill** in the top left. It should say "RUNNING".
-4.  Markets with active trading should show "Live".
+3.  Check **Bot Status** panel - Engine should show "RUNNING".
+4.  Check **Trading Mode** - Should show "LIVE" (not "PAPER TRADING").
+5.  Verify your API credentials work by checking if markets load with prices.
 
 ## 6. Maintenance
--   **Stop the Bot**: `docker-compose down`
--   **View Logs**: `docker-compose logs -f backend`
--   **Update**: `git pull && docker-compose up -d --build`
+
+| Task | Command |
+|------|---------|
+| Stop the Bot | `docker compose -f docker/docker-compose.yml down` |
+| View Logs | `docker compose -f docker/docker-compose.yml logs -f backend` |
+| Update | `git pull && docker compose -f docker/docker-compose.yml up -d --build` |
+| Run Tests | `docker compose -f docker/docker-compose.yml run --rm backend pytest` |
 
 ## 7. Windows Management Script (`manage.ps1`)
 For Windows users, `manage.ps1` wraps common Docker commands for convenience.
 
-| Command | Description | Underlying Docker Command |
-| :--- | :--- | :--- |
-| `.\manage.ps1 dev` | **Start System**: Builds and runs services in background (with logs). | `docker-compose up --build` |
-| `.\manage.ps1 down` | **Stop System**: Stops and removes containers. | `docker-compose down` |
-| `.\manage.ps1 test` | **Run Tests**: Executes backend unit tests (pytest). | `docker-compose run backend pytest` |
+| Command | Description |
+| :--- | :--- |
+| `.\manage.ps1 dev` | Start development environment |
+| `.\manage.ps1 down` | Stop and remove containers |
+| `.\manage.ps1 test` | Run backend unit tests |
 
+## 8. Troubleshooting
+
+**Bot not placing orders?**
+- Check `LIVE_TRADING_ENABLED=true` in `backend/.env`
+- Verify `PAPER_MODE=false`
+- Ensure API keys have Trade permissions
+
+**Can't connect to markets?**
+- Check `EXCHANGE_TYPE=coinbase` (not `mock`)
+- Verify API credentials are correct
+
+**Frontend not loading?**
+- Ensure port 5173 is open in your firewall
+- Check frontend container logs: `docker compose -f docker/docker-compose.yml logs frontend`

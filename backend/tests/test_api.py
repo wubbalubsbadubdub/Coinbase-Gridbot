@@ -47,7 +47,7 @@ async def test_get_bot_status(client):
 @pytest.mark.asyncio
 async def test_market_crud(client, api_db_session):
     # 1. Seed a market
-    market = Market(id="BTC-USD", enabled=False, ranking=1)
+    market = Market(id="BTC-USD", enabled=False, market_rank=1)
     api_db_session.add(market)
     await api_db_session.commit()
     

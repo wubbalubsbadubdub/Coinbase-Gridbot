@@ -10,24 +10,68 @@ class MockAdapter(ExchangeAdapter):
     In-memory mock exchange for testing and paper trading.
     """
     def __init__(self):
-        self.orders: Dict[str, Dict[str, Any]] = {}  # order_id -> order_data
-        self.balances = {"USD": 10000.0, "BTC": 1.0, "ETH": 10.0}
+        self.balances = {"USD": 10000.0, "BTC": 0.5, "ETH": 5.0}
+        self.orders = {}
+        
+        # Realistic mock keys for expanded product list
+        self.mock_products = [
+            "BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD", "AVAX-USD",
+            "DOGE-USD", "SHIB-USD", "MATIC-USD", "DOT-USD", "LTC-USD",
+            "LINK-USD", "UNI-USD", "ATOM-USD", "XLM-USD", "BCH-USD",
+            "ALGO-USD", "FIL-USD", "VET-USD", "ICP-USD", "SAND-USD"
+        ]
+        
+        # Initialize random prices for them
         self.current_prices = {
-            "BTC-USD": 50000.0, 
-            "ETH-USD": 3000.0,
-            "SOL-USD": 100.0,
-            "ADA-USD": 1.20,
-            "DOT-USD": 7.50
+            "BTC-USD": 45000.0,
+            "ETH-USD": 2800.0,
+            "SOL-USD": 95.0,
+            "ADA-USD": 0.55,
+            "AVAX-USD": 35.0,
+            "DOGE-USD": 0.08,
+            "SHIB-USD": 0.00001,
+            "MATIC-USD": 0.85,
+            "DOT-USD": 7.50,
+            "LTC-USD": 70.0,
+            "LINK-USD": 15.0,
+            "UNI-USD": 6.50,
+            "ATOM-USD": 10.0,
+            "XLM-USD": 0.12,
+            "BCH-USD": 250.0,
+            "ALGO-USD": 0.18,
+            "FIL-USD": 5.50,
+            "VET-USD": 0.03,
+            "ICP-USD": 12.0,
+            "SAND-USD": 0.45
         }
 
-    async def get_products(self) -> List[Any]:
-        return [
-            {"id": "BTC-USD", "base_currency": "BTC", "quote_currency": "USD"},
-            {"id": "ETH-USD", "base_currency": "ETH", "quote_currency": "USD"},
-            {"id": "SOL-USD", "base_currency": "SOL", "quote_currency": "USD"},
-            {"id": "ADA-USD", "base_currency": "ADA", "quote_currency": "USD"},
-            {"id": "DOT-USD", "base_currency": "DOT", "quote_currency": "USD"}
-        ]
+    async def get_account(self):
+        """Mock account balance"""
+        return {
+            "balance": self.balances["USD"],
+            "currency": "USD"
+        }
+
+    async def get_products(self):
+        """Return expanded list of mock products with volume"""
+        import random
+        products = []
+        for pair in self.mock_products:
+            base = pair.split("-")[0]
+            # Generate consistent but random-looking volume
+            vol = random.randint(100000, 10000000)
+            if base in ["BTC", "ETH", "SOL"]:
+                vol *= 10
+            
+            products.append({
+                "id": pair,
+                "base_currency": base,
+                "quote_currency": "USD",
+                "display_name": pair,
+                "volume_24h": float(vol),
+                "status": "online"
+            })
+        return products
 
     async def get_balances(self) -> Dict[str, float]:
         return self.balances

@@ -26,7 +26,7 @@ async def db_session(test_engine):
 @pytest.mark.asyncio
 async def test_create_market_and_order(db_session):
     # 1. Create a Market
-    market = Market(id="BTC-USD", enabled=True, ranking=1)
+    market = Market(id="BTC-USD", enabled=True, market_rank=1)
     db_session.add(market)
     await db_session.commit()
     

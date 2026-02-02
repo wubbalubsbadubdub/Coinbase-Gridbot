@@ -1,6 +1,7 @@
 export interface Market {
     id: string;
     enabled: boolean;
+    is_favorite: boolean;
     ranking: number;
     settings?: any;
 }
@@ -25,17 +26,42 @@ export interface Order {
 }
 
 export interface Lot {
-    id: string;
+    id: number;
     market_id: string;
+    buy_order_id: string;
     buy_price: number;
-    size: number;
+    buy_size: number;
+    buy_time?: string;
     sell_order_id?: string;
+    sell_price?: number;
     status: string;
+    realized_pnl: number;
 }
 
 export const api = {
-    getMarkets: async (): Promise<Market[]> => {
-        const res = await fetch('/api/markets/');
+    getMarkets: async (favoritesOnly = false): Promise<Market[]> => {
+        const url = favoritesOnly ? '/api/markets/?favorites_only=true' : '/api/markets/';
+        const res = await fetch(url);
+        return res.json();
+    },
+
+    getAllPairs: async (): Promise<any[]> => {
+        const res = await fetch('/api/markets/all-pairs');
+        return res.json();
+    },
+
+    toggleFavorite: async (id: string): Promise<any> => {
+        const res = await fetch(`/api/markets/${id}/favorite`, { method: 'POST' });
+        return res.json();
+    },
+
+    startMarket: async (id: string): Promise<any> => {
+        const res = await fetch(`/api/markets/${id}/start`, { method: 'POST' });
+        return res.json();
+    },
+
+    stopMarket: async (id: string): Promise<any> => {
+        const res = await fetch(`/api/markets/${id}/stop`, { method: 'POST' });
         return res.json();
     },
 

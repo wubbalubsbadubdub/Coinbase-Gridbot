@@ -7,19 +7,31 @@ export function Settings() {
     const [status, setStatus] = useState<string>('');
 
     useEffect(() => {
-        api.getConfig().then(setConfig).catch(console.error);
+        api.getConfig().then(data => {
+            // Convert decimal values to percentage display values
+            setConfig({
+                ...data,
+                grid_step_pct: data.grid_step_pct ? (data.grid_step_pct * 100).toFixed(2) : '',
+                staging_band_depth_pct: data.staging_band_depth_pct ? (data.staging_band_depth_pct * 100).toFixed(2) : '',
+                buffer_pct: data.buffer_pct ? (data.buffer_pct * 100).toFixed(2) : '',
+                custom_profit_pct: data.custom_profit_pct ? (data.custom_profit_pct * 100).toFixed(2) : '',
+            });
+        }).catch(console.error);
     }, []);
 
     const handleSave = async () => {
         try {
             await api.updateConfig({
-                grid_step_pct: parseFloat(config.grid_step_pct),
+                // Divide percentage inputs by 100 to convert from human-readable (0.33) to decimal (0.0033)
+                grid_step_pct: parseFloat(config.grid_step_pct) / 100,
                 budget: parseFloat(config.budget),
                 max_open_orders: parseInt(config.max_open_orders),
-                staging_band_depth_pct: parseFloat(config.staging_band_depth_pct),
+                staging_band_depth_pct: parseFloat(config.staging_band_depth_pct) / 100,
                 profit_mode: config.profit_mode,
                 buffer_enabled: config.buffer_enabled,
-                buffer_pct: parseFloat(config.buffer_pct)
+                buffer_pct: parseFloat(config.buffer_pct || 0) / 100,
+                custom_profit_pct: parseFloat(config.custom_profit_pct || 0) / 100,
+                monthly_profit_target_usd: parseFloat(config.monthly_profit_target_usd || 0)
             });
             setStatus('Saved!');
             setTimeout(() => setStatus(''), 2000);
@@ -34,13 +46,14 @@ export function Settings() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '400px' }}>
                 <div>
                     <label>
-                        Grid Step %
-                        <InfoTooltip text="The percentage distance between each buy/sell grid level. (e.g. 0.005 = 0.5%)" />
+                        Grid Step (%)
+                        <InfoTooltip text="The percentage distance between each buy/sell grid level. Enter as %, e.g., 0.33 for 0.33%" />
                     </label>
                     <input
-                        type="number" step="0.0001"
-                        value={config.grid_step_pct}
+                        type="number" step="0.01"
+                        value={config.grid_step_pct !== undefined ? config.grid_step_pct : ''}
                         onChange={e => setConfig({ ...config, grid_step_pct: e.target.value })}
+                        placeholder="e.g., 0.33"
                     />
                 </div>
                 <div>
@@ -71,59 +84,84 @@ export function Settings() {
 
                 <div>
                     <label>
-                        Staging Band Depth %
-                        <InfoTooltip text="How far below the current price to keep 'active' buy orders. Saves API limits." />
+                        Staging Band Depth (%)
+                        <InfoTooltip text="How far below the current price to keep 'active' buy orders. Enter as %, e.g., 5 for 5%" />
                     </label>
                     <input
-                        type="number" step="0.001"
-                        value={config.staging_band_depth_pct || ''}
+                        type="number" step="0.1"
+                        value={config.staging_band_depth_pct !== undefined ? config.staging_band_depth_pct : ''}
                         onChange={e => setConfig({ ...config, staging_band_depth_pct: e.target.value })}
+                        placeholder="e.g., 5"
                     />
                 </div>
 
-                <div>
-                    <label>
-                        Profit Mode
-                        <InfoTooltip text="STEP: Reinvest profit into position size. CUSTOM: Currently same as Step (placeholder)." />
-                    </label>
-                    <select
-                        value={config.profit_mode || 'STEP'}
-                        onChange={e => setConfig({ ...config, profit_mode: e.target.value })}
-                        style={{ width: '100%', padding: '8px', background: '#333', color: 'white', border: '1px solid #555' }}
-                    >
-                        <option value="STEP">Step (Re-invest)</option>
-                        <option value="CUSTOM">Custom Target</option>
-                    </select>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <input
-                        type="checkbox"
-                        checked={config.buffer_enabled || false}
-                        onChange={e => setConfig({ ...config, buffer_enabled: e.target.checked })}
-                    />
-                    <label>
-                        Enable Buffer
-                        <InfoTooltip text="Prevents buying the absolute top. If enabled, the bot waits for price to drop by 'Buffer %' from the High before placing the first grid level. (GridTop = AnchorHigh * (1 - buffer_pct))" />
-                    </label>
-                </div>
-
-                {config.buffer_enabled && (
-                    <div>
-                        <label>Buffer %</label>
-                        <input
-                            type="number" step="0.001"
-                            value={config.buffer_pct || ''}
-                            onChange={e => setConfig({ ...config, buffer_pct: e.target.value })}
-                        />
-                    </div>
-                )}
-
-                <button onClick={handleSave} className="primary">
-                    Save Changes
-                </button>
-                {status && <span>{status}</span>}
+                <label>
+                    Profit Mode
+                    <InfoTooltip text="STEP: Fixed Size. REINVEST: Compound. SMART: Fixed until Target, then Compound." />
+                </label>
+                <select
+                    value={config.profit_mode || 'STEP'}
+                    onChange={e => setConfig({ ...config, profit_mode: e.target.value })}
+                    style={{ width: '100%', padding: '8px', background: '#333', color: 'white', border: '1px solid #555' }}
+                >
+                    <option value="STEP">Step (Fixed Income)</option>
+                    <option value="STEP_REINVEST">Step (Reinvest)</option>
+                    <option value="CUSTOM">Custom Target</option>
+                    <option value="SMART_REINVEST">Smart Reinvest</option>
+                </select>
             </div>
+
+            {config.profit_mode === 'CUSTOM' && (
+                <div>
+                    <label>Custom Profit (%)</label>
+                    <input
+                        type="number" step="0.1"
+                        value={config.custom_profit_pct !== undefined ? config.custom_profit_pct : ''}
+                        onChange={e => setConfig({ ...config, custom_profit_pct: e.target.value })}
+                        placeholder="e.g., 1.5"
+                    />
+                </div>
+            )}
+
+            {config.profit_mode === 'SMART_REINVEST' && (
+                <div>
+                    <label>Monthly Target ($)</label>
+                    <input
+                        type="number"
+                        value={config.monthly_profit_target_usd || ''}
+                        onChange={e => setConfig({ ...config, monthly_profit_target_usd: e.target.value })}
+                    />
+                </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                    type="checkbox"
+                    checked={config.buffer_enabled || false}
+                    onChange={e => setConfig({ ...config, buffer_enabled: e.target.checked })}
+                />
+                <label>
+                    Enable Buffer
+                    <InfoTooltip text="Prevents buying the absolute top. If enabled, the bot waits for price to drop by 'Buffer %' from the High before placing the first grid level. (GridTop = AnchorHigh * (1 - buffer_pct))" />
+                </label>
+            </div>
+
+            {config.buffer_enabled && (
+                <div>
+                    <label>Buffer (%)</label>
+                    <input
+                        type="number" step="0.1"
+                        value={config.buffer_pct !== undefined ? config.buffer_pct : ''}
+                        onChange={e => setConfig({ ...config, buffer_pct: e.target.value })}
+                        placeholder="e.g., 2"
+                    />
+                </div>
+            )}
+
+            <button onClick={handleSave} className="primary">
+                Save Changes
+            </button>
+            {status && <span>{status}</span>}
         </div>
     );
 }

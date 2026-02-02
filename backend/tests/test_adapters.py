@@ -12,7 +12,7 @@ async def test_mock_adapter_lifecycle():
     
     # 2. Get Ticker
     price = await adapter.get_ticker("BTC-USD")
-    assert price == 50000.0
+    assert price == 45000.0
     
     # 3. Place Order
     order_id = await adapter.place_limit_order(

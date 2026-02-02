@@ -25,6 +25,12 @@ class BotEngine:
         self.strategy = GridStrategy()
         self.is_running = False
 
+        # if profit_mode: ... (Removed invalid block)
+        pass # Strategy initialized above
+
+    # Wait, I need to update the signature of update_config first.
+    # Let me do that in the "ReplacementContent" properly.
+    
     def update_config(self, 
                       grid_step_pct: float = None, 
                       budget: float = None, 
@@ -32,7 +38,9 @@ class BotEngine:
                       staging_band_depth_pct: float = None,
                       buffer_enabled: bool = None,
                       buffer_pct: float = None,
-                      profit_mode: str = None):
+                      profit_mode: str = None,
+                      custom_profit_pct: float = None,
+                      monthly_profit_target_usd: float = None):
         """
         Hot-reload strategy configuration.
         """
@@ -56,44 +64,98 @@ class BotEngine:
             self.strategy.buffer_pct = buffer_pct
             logger.info(f"Updated Buffer % to {buffer_pct}")
         
-        # profit_mode logic TBD when implemented in strategy, for now just log
         if profit_mode:
+            self.strategy.profit_mode = profit_mode
             logger.info(f"Updated Profit Mode to {profit_mode}")
+
+        if custom_profit_pct is not None:
+            self.strategy.custom_profit_pct = custom_profit_pct
+            logger.info(f"Updated Custom Profit % to {custom_profit_pct}")
+            
+        if monthly_profit_target_usd is not None:
+            self.strategy.monthly_profit_target_usd = monthly_profit_target_usd
+            logger.info(f"Updated Monthly Target to {monthly_profit_target_usd}")
         
-        # Budget logic would go here if strategy supported dynamic budget re-calc
-        # For now, just logging it
+        # Budget logic 
         if budget is not None:
+             self.strategy.budget = budget
              logger.info(f"Updated Budget to {budget}")
+
+    async def check_monthly_reset(self, session: AsyncSession):
+        """
+        Resets profit counter if month changed.
+        """
+        import datetime
+        current_month = datetime.datetime.now().month
+        
+        key = "profit_tracker"
+        res = await session.execute(select(BotState).where(BotState.key == key))
+        state = res.scalar_one_or_none()
+        
+        if not state:
+            # Init
+            session.add(BotState(key=key, value={"current_month_profit_usd": 0.0, "last_profit_reset_month": current_month}))
+            await session.commit()
+            return
+
+        data = state.value
+        last_month = data.get("last_profit_reset_month", -1)
+        
+        if current_month != last_month:
+            logger.info(f"New Month detected ({current_month}). Resetting Profit Counter.")
+            state.value = {"current_month_profit_usd": 0.0, "last_profit_reset_month": current_month}
+            await session.commit()
+
+    async def add_profit(self, session: AsyncSession, amount_usd: float):
+        key = "profit_tracker"
+        res = await session.execute(select(BotState).where(BotState.key == key))
+        state = res.scalar_one_or_none()
+        if state:
+            # Creating a new dict to ensure SQLAlchemy detects change for JSON
+            current_data = dict(state.value)
+            old_profit = current_data.get("current_month_profit_usd", 0.0)
+            new_profit = old_profit + amount_usd
+            current_data["current_month_profit_usd"] = new_profit
+            state.value = current_data
+            logger.info(f"Profit Recorded: +${amount_usd:.2f} | Month Total: ${new_profit:.2f}")
+
+    async def get_current_monthly_profit(self, session: AsyncSession) -> float:
+        key = "profit_tracker"
+        res = await session.execute(select(BotState).where(BotState.key == key))
+        state = res.scalar_one_or_none()
+        if state:
+             return state.value.get("current_month_profit_usd", 0.0)
+        return 0.0
 
     async def stop_and_cancel_all(self):
         """
-        Emergency Stop: Pauses ticking and cancels all open orders.
+        Emergency Stop: Pauses ticking, disables all markets, and cancels all open orders.
         """
         logger.warning("EMERGENCY STOP TRIGGERED")
-        self.is_running = False # Actually, we need to ensure tick loop respects this?
-        # Note: run_loop currently is `while True`. We should modify it to respect `is_running` or adding a pause flag.
-        # But for 'Stop', we probably want to stop placing orders.
-        # Let's add a paused flag logic to `tick`. (Actually `settings.LIVE_TRADING_ENABLED` controls tick).
-        # We can flip settings too, or just cancel everything.
+        self.is_running = False
         
-        # 1. Cancel All via Adapter
         try:
-             # This assumes Adapter has cancel_all or we iterate open orders.
-             # SPEC said cancel_all endpoint. Coinbase has cancel_all logic.
-             # We should fetch all open orders and cancel them.
-             async with self.db_session_factory() as session:
-                 # Fetch OPEN orders from DB to be fast
-                 result = await session.execute(select(Order).where(Order.status == "OPEN"))
-                 orders = result.scalars().all()
-                 
-                 for order in orders:
-                     try:
-                         await self.adapter.cancel_order(order.id)
-                         order.status = "CANCELED"
-                     except Exception as e:
-                         logger.error(f"Failed to panic cancel {order.id}: {e}")
-                 
-                 await session.commit()
+            async with self.db_session_factory() as session:
+                # 1. Disable ALL enabled markets so bot doesn't recreate orders
+                await session.execute(
+                    update(Market)
+                    .where(Market.enabled == True)
+                    .values(enabled=False)
+                )
+                
+                # 2. Cancel all open orders
+                result = await session.execute(select(Order).where(Order.status == "OPEN"))
+                orders = result.scalars().all()
+                
+                for order in orders:
+                    try:
+                        await self.adapter.cancel_order(order.id)
+                        order.status = "CANCELED"
+                    except Exception as e:
+                        logger.error(f"Failed to panic cancel {order.id}: {e}")
+                
+                await session.commit()
+                logger.info(f"Emergency stop: Disabled all markets and canceled {len(orders)} orders")
         except Exception as e:
             logger.error(f"Panic cancel failed: {e}")
 
@@ -160,14 +222,17 @@ class BotEngine:
         try:
             market_id = market.id
             
+            # --- PROFIT TRACKING & RESET ---
+            await self.check_monthly_reset(session)
+            
             # 2. Get Current Price (Ticker)
             current_price = await self.adapter.get_ticker(market_id)
             if current_price <= 0:
                 logger.warning(f"Invalid price for {market_id}: {current_price}")
                 return
             
-            # Broadcast Update
-            await self.broadcast("PRICE_UPDATE", {"market_id": market_id, "price": current_price})
+            # Broadcast Update - MOVED to after Rebase
+            # await self.broadcast("PRICE_UPDATE", {"market_id": market_id, "price": current_price})
 
             # --- PROCESS FILLS & LOTS ---
             await self.process_fills(session, market_id, current_price)
@@ -190,6 +255,18 @@ class BotEngine:
                 else:
                     session.add(BotState(key=anchor_key, value={"price": new_anchor}))
                 await session.commit()
+            
+            # Broadcast Update (Now with latest Anchor)
+            grid_top = new_anchor
+            if self.strategy.buffer_enabled and self.strategy.buffer_pct > 0:
+                grid_top = new_anchor * (1 - self.strategy.buffer_pct)
+
+            await self.broadcast("PRICE_UPDATE", {
+                "market_id": market_id, 
+                "price": current_price,
+                "anchor": new_anchor,
+                "grid_top": grid_top
+            })
             
             # 5. Sync Grid Orders
             await self.sync_orders(session, market_id, new_anchor, current_price)
@@ -251,7 +328,19 @@ class BotEngine:
                     logger.error(f"Failed to place exit sell: {e}")
             
             elif side == "SELL":
-                logger.info(f"Grid Sell Filled! PROFIT REALIZED.")
+                # Realized Profit Calculation
+                # For now, approximate as (Price - (Price / (1+Step))) * Size? 
+                # Or just (Price * Size) - Buy_Cost. 
+                # Since we don't track Buy Cost perfectly in Order yet, let's use Strategy Estimate:
+                # Profit ~= Size * BuyPrice * StepPct 
+                # BuyPrice ~= SellPrice / (1 + Step)
+                # Profit = Size * (SellPrice / (1+Step)) * Step
+                step = self.strategy.grid_step_pct
+                estimated_profit = size * (price / (1 + step)) * step
+                
+                logger.info(f"Grid Sell Filled! PROFIT REALIZED: ${estimated_profit:.2f}")
+                await self.add_profit(session, estimated_profit)
+                
                 # TODO: Update Lot status to Closed
 
         if new_fills:
@@ -290,9 +379,32 @@ class BotEngine:
                 continue
                 
             # Place Order
-            # For Paper Mode, we use a fixed size or budget calc (TODO)
-            size = 0.0001 # Small fixed size for testing
-            logger.info(f"Placing BUY for {market_id} at {price}")
+            # Dynamic Sizing Logic
+            base_size = 0.0001 # Default fixed
+            
+            mode = self.strategy.profit_mode
+            current_profit = await self.get_current_monthly_profit(session)
+            target = self.strategy.monthly_profit_target_usd
+            
+            # Logic
+            if mode == "SMART_REINVEST":
+                if current_profit >= target:
+                    # Compound! (Increase size)
+                    # Example: Double size or proportional? 
+                    # Let's say: base_size * (1 + (profit - target)/target) ? 
+                    # For MVP, let's just DOUBLE it to prove it works
+                    base_size = 0.0002 
+                    logger.info(f"Smart Reinvest Active! (Profit ${current_profit:.2f} >= ${target}). Boosting Size.")
+                else:
+                    logger.info(f"Smart Reinvest: Building Base (Profit ${current_profit:.2f} < ${target}). Standard Size.")
+            
+            elif mode == "STEP_REINVEST":
+                 # Always boost
+                 base_size = 0.0002
+            
+            size = base_size
+            
+            logger.info(f"Placing BUY for {market_id} at {price} (Size: {size})")
             try:
                 order_id = await self.adapter.place_limit_order(market_id, "BUY", price, size)
                 

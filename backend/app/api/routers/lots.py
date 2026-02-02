@@ -12,5 +12,5 @@ router = APIRouter(prefix="/lots", tags=["lots"])
 @router.get("/", response_model=List[LotResponse])
 async def list_lots(db: AsyncSession = Depends(get_db)):
     # Return all active lots (OPEN)
-    result = await db.execute(select(Lot).where(Lot.status == "OPEN").order_by(Lot.buy_timestamp.desc()))
+    result = await db.execute(select(Lot).where(Lot.status == "OPEN").order_by(Lot.buy_time.desc()))
     return result.scalars().all()
