@@ -7,9 +7,16 @@ This guide covers how to deploy the Coinbase Gridbot to a production environment
 -   Coinbase Advanced Trade API Keys (Key and Secret).
 
 ## 1. Get Coinbase API Keys
+
+> [!CAUTION]
+> **NEVER enable "Transfer" permission.** This permission allows the API key to withdraw funds from your account. A trading bot only needs **View** and **Trade** permissions. If a hacker obtains a key with Transfer enabled, they can drain your entire account.
+
 1.  Log in to [Coinbase Advanced Trade](https://www.coinbase.com/advanced-trade).
 2.  Go to **Settings > API**.
-3.  Create a new API Key with **Trade** permissions (View, Transfer, Trade).
+3.  Create a new API Key with the following permissions:
+    - ✅ **View** - Required to read prices and account balances
+    - ✅ **Trade** - Required to place and cancel orders
+    - ❌ **Transfer** - **UNCHECK THIS** - Never enable for trading bots
 4.  **Important**: Save the `API Key Name` and `API Secret` immediately. You cannot see the secret again.
 
 ## 2. Server Setup
@@ -37,7 +44,11 @@ LIVE_TRADING_ENABLED=true   # Enable real trading
 PAPER_MODE=false            # Disable paper trading
 ```
 
-> **Warning**: Double-check `LIVE_TRADING_ENABLED=true` and `PAPER_MODE=false` before deploying. The bot defaults to paper trading mode for safety.
+> [!WARNING]
+> **Verify your `.gitignore` before committing!** Run `git status` and ensure `backend/.env` is NOT listed. If you accidentally commit your API keys, rotate them immediately on Coinbase.
+
+> [!IMPORTANT]
+> Double-check `LIVE_TRADING_ENABLED=true` and `PAPER_MODE=false` before deploying. The bot defaults to paper trading mode for safety.
 
 ## 4. Run the Bot
 

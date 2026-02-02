@@ -3,7 +3,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     ENV: str = "dev"
     LOG_LEVEL: str = "INFO"
-    LOG_LEVEL: str = "INFO"
     LIVE_TRADING_ENABLED: bool = False
     PAPER_MODE: bool = True
     
