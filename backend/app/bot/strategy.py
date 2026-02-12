@@ -17,7 +17,11 @@ class GridStrategy:
                  custom_profit_pct: float = 0.01,
                  monthly_profit_target_usd: float = 1000.0,
                  profit_mode: str = "STEP",
-                 budget: float = 1000.0):
+                 budget: float = 1000.0,
+                 # NEW: Sizing options
+                 sizing_mode: str = "BUDGET_SPLIT",  # BUDGET_SPLIT, FIXED_USD, CAPITAL_PCT
+                 fixed_usd_per_trade: float = 10.0,  # For FIXED_USD mode
+                 capital_pct_per_trade: float = 1.0):  # For CAPITAL_PCT mode (1% default)
         self.grid_step_pct = grid_step_pct
         self.staging_band_pct = staging_band_pct
         self.max_orders = max_orders
@@ -27,6 +31,10 @@ class GridStrategy:
         self.monthly_profit_target_usd = monthly_profit_target_usd
         self.profit_mode = profit_mode
         self.budget = budget
+        # NEW: Sizing settings
+        self.sizing_mode = sizing_mode
+        self.fixed_usd_per_trade = fixed_usd_per_trade
+        self.capital_pct_per_trade = capital_pct_per_trade
 
     def calculate_new_anchor(self, current_price: float, old_anchor: Optional[float]) -> float:
         """
@@ -90,3 +98,16 @@ class GridStrategy:
         """
         lower_bound = current_price * (1 - self.staging_band_pct)
         return order_price < lower_bound
+
+    def get_effective_budget(self, current_profit: float) -> float:
+        """
+        Calculates the effective budget based on profit mode.
+        If SMART_REINVEST, adds excess profit (Profit - Target) to the base budget.
+        """
+        if self.profit_mode == "SMART_REINVEST":
+            # Only reinvest if we are ABOVE the target
+            excess_profit = max(0.0, current_profit - self.monthly_profit_target_usd)
+            return self.budget + excess_profit
+        
+        # Default: Just use base budget
+        return self.budget

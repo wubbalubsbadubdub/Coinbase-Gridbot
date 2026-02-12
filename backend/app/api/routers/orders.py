@@ -10,14 +10,20 @@ from app.schemas import OrderResponse
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 @router.get("/", response_model=List[OrderResponse])
-async def list_orders(market_id: Optional[str] = None, status: Optional[str] = "OPEN", db: AsyncSession = Depends(get_db)):
+async def list_orders(
+    market_id: Optional[str] = None, 
+    status: Optional[str] = "OPEN", 
+    limit: int = 30,
+    skip: int = 0,
+    db: AsyncSession = Depends(get_db)
+):
     query = select(Order)
     if market_id:
         query = query.where(Order.market_id == market_id)
     if status != "ALL":
         query = query.where(Order.status == status)
     
-    query = query.order_by(Order.created_at.desc())
+    query = query.order_by(Order.created_at.desc()).limit(limit).offset(skip)
     result = await db.execute(query)
     return result.scalars().all()
 

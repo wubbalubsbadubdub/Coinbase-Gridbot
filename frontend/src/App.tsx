@@ -3,8 +3,10 @@ import { BotStatusPanel } from './components/BotStatus';
 import { MarketList } from './components/MarketList';
 import { OrderManager } from './components/OrderManager';
 import { Settings } from './components/Settings';
-import { PriceChart } from './components/PriceChart';
+import { PriceChart, ChartState } from './components/PriceChart';
 import { MarketModal } from './components/MarketModal';
+import { CapitalOverview } from './components/CapitalOverview';
+import { PnLBreakdownPanel } from './components/PnLBreakdown';
 import { api } from './api';
 
 function App() {
@@ -13,13 +15,18 @@ function App() {
     const [runningMarket, setRunningMarket] = useState<string | null>(null);
     const [isMarketModalOpen, setIsMarketModalOpen] = useState(false);
 
+    // Chart state lifted here so it persists across navigation
+    const [chartState, setChartState] = useState<ChartState>({
+        data: [],
+        anchor: null,
+        gridTop: null
+    });
+
     // Poll for running market (Highlander rule means max 1)
     useEffect(() => {
         const checkRunning = async () => {
             try {
-                // We can use getMarkets(false) and find enabled?
-                // Or maybe a new endpoint? getMarkets is fine.
-                const all = await api.getMarkets(); // fetch all db markets
+                const all = await api.getMarkets();
                 const running = all.find(m => m.enabled);
                 setRunningMarket(running ? running.id : null);
             } catch (e) {
@@ -32,6 +39,11 @@ function App() {
     }, []);
 
     const activeViewMarket = runningMarket || selectedMarket;
+
+    // Reset chart when market changes
+    useEffect(() => {
+        setChartState({ data: [], anchor: null, gridTop: null });
+    }, [activeViewMarket]);
 
     const handleStop = async () => {
         if (confirm("EMERGENCY STOP: Are you sure you want to PAUSE the bot and CANCEL ALL OPEN ORDERS?")) {
@@ -66,7 +78,6 @@ function App() {
                 <>
                     <div className="dashboard-layout">
                         <div className="dashboard-sidebar">
-                            {/* Search trigger button */}
                             <button
                                 className="search-trigger"
                                 onClick={() => setIsMarketModalOpen(true)}
@@ -80,13 +91,22 @@ function App() {
                         </div>
                         <div className="dashboard-main">
                             <BotStatusPanel />
+
+                            <div className="stats-row">
+                                <CapitalOverview />
+                                <PnLBreakdownPanel />
+                            </div>
+
                             <div className="chart-wrapper">
-                                <PriceChart marketId={activeViewMarket} />
+                                <PriceChart
+                                    marketId={activeViewMarket}
+                                    chartState={chartState}
+                                    onChartStateChange={setChartState}
+                                />
                             </div>
                         </div>
                     </div>
 
-                    {/* OrderManager is OUTSIDE the flex row, full-width below */}
                     <div style={{ marginTop: '1rem' }}>
                         <OrderManager />
                     </div>
@@ -97,7 +117,6 @@ function App() {
                 </div>
             )}
 
-            {/* Market Search Modal */}
             <MarketModal
                 isOpen={isMarketModalOpen}
                 onClose={() => setIsMarketModalOpen(false)}
@@ -108,4 +127,3 @@ function App() {
 }
 
 export default App;
-

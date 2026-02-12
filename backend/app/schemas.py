@@ -28,6 +28,10 @@ class ConfigUpdate(BaseModel):
     buffer_pct: Optional[float] = None
     custom_profit_pct: Optional[float] = None
     monthly_profit_target_usd: Optional[float] = None
+    # NEW: Trade sizing options
+    sizing_mode: Optional[str] = None  # "BUDGET_SPLIT", "FIXED_USD", "CAPITAL_PCT"
+    fixed_usd_per_trade: Optional[float] = None
+    capital_pct_per_trade: Optional[float] = None
 
 class MarketUpdate(BaseModel):
     enabled: Optional[bool] = None

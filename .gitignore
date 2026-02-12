@@ -26,3 +26,8 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Logs
+*.log
+*_logs.txt
+*_debug.txt

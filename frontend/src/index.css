@@ -38,6 +38,23 @@ body {
   gap: 1rem;
 }
 
+/* Stats Row - Capital + PnL cards */
+.stats-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .stats-row {
+    flex-direction: row;
+  }
+
+  .stats-row>* {
+    flex: 1;
+  }
+}
+
 /* Desktop: Row layout */
 @media (min-width: 1024px) {
   .dashboard-layout {
@@ -57,16 +74,12 @@ body {
 
 /* Chart Container */
 .chart-wrapper {
-  background: var(--card-bg);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  padding: 1rem;
+  /* No visual styles, just layout dimensions */
   height: 350px;
   /* Mobile height */
   width: 100%;
   box-sizing: border-box;
-  overflow: hidden;
-  /* Prevent chart overflow */
+  /* PriceChart component handles the internal card stying */
 }
 
 @media (min-width: 1024px) {

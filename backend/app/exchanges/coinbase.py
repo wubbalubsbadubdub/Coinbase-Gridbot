@@ -1,12 +1,15 @@
-import hmac
-import hashlib
 import time
 import json
 import logging
 import asyncio
 import uuid
+import secrets
 from typing import List, Dict, Any, Optional
 import httpx
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+import jwt
+
 from app.exchanges.interface import ExchangeAdapter
 from app.config import settings
 
@@ -15,6 +18,7 @@ logger = logging.getLogger(__name__)
 class CoinbaseAdapter(ExchangeAdapter):
     """
     Coinbase Advanced Trade API Adapter.
+    Uses JWT/ES256 authentication for CDP API keys.
     Docs: https://docs.cloud.coinbase.com/advanced-trade-api/docs/rest-api-overview
     """
     BASE_URL = "https://api.coinbase.com/api/v3"
@@ -26,216 +30,263 @@ class CoinbaseAdapter(ExchangeAdapter):
         if not self.api_key or not self.api_secret:
             logger.warning("Coinbase API keys not set. Adapter will fail on requests.")
 
-    def _generate_signature(self, method: str, path: str, body: str = "") -> str:
-        timestamp = str(int(time.time()))
-        message = timestamp + method + path + body
-        signature = hmac.new(
-            self.api_secret.encode("utf-8"),
-            message.encode("utf-8"),
-            hashlib.sha256
-        ).hexdigest()
-        return timestamp, signature
+    def _build_jwt(self, method: str, path: str) -> str:
+        """
+        Build a JWT token for CDP API authentication.
+        Uses ES256 (ECDSA with P-256 curve and SHA-256).
+        """
+        # Parse the private key
+        private_key_pem = self.api_secret
+        
+        # Handle escaped newlines from environment variables
+        if "\\n" in private_key_pem:
+            private_key_pem = private_key_pem.replace("\\n", "\n")
+        
+        try:
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode("utf-8"),
+                password=None
+            )
+        except Exception as e:
+            logger.error(f"Failed to load private key: {e}")
+            raise ValueError(f"Invalid private key format: {e}")
 
-    async def _request(self, method: str, endpoint: str, data: Dict[str, Any] = None) -> Dict[str, Any]:
+        # JWT header
+        headers = {
+            "alg": "ES256",
+            "kid": self.api_key,  # The API key ID
+            "nonce": secrets.token_hex(16),  # Random nonce
+            "typ": "JWT"
+        }
+        
+        # JWT payload
+        uri = f"{method} api.coinbase.com{path}"
+        now = int(time.time())
+        
+        payload = {
+            "iss": "coinbase-cloud",
+            "nbf": now,
+            "exp": now + 120,  # 2 minute expiry
+            "sub": self.api_key,
+            "uri": uri
+        }
+        
+        # Sign the JWT
+        token = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
+        return token
+
+    async def _request(self, method: str, endpoint: str, data: Dict[str, Any] = None, retry_count: int = 0) -> Dict[str, Any]:
+        """
+        Make an authenticated request to Coinbase API with automatic rate limit handling.
+        """
+        MAX_RETRIES = 3
+        
         url = f"{self.BASE_URL}{endpoint}"
         body_str = json.dumps(data) if data else ""
         
-        # Path for signature must exclude the domain, include /api/v3
-        path_for_sign = f"/api/v3{endpoint}"
+        # Path for JWT includes /api/v3
+        path_for_jwt = f"/api/v3{endpoint}"
 
-        timestamp, signature = self._generate_signature(method.upper(), path_for_sign, body_str)
+        jwt_token = self._build_jwt(method.upper(), path_for_jwt)
         
         headers = {
-            "CB-ACCESS-KEY": self.api_key,
-            "CB-ACCESS-SIGN": signature,
-            "CB-ACCESS-TIMESTAMP": timestamp,
+            "Authorization": f"Bearer {jwt_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.request(method, url, headers=headers, content=body_str)
+                response = await client.request(method, url, headers=headers, content=body_str if data else None)
+                
+                # Handle rate limiting (429 Too Many Requests)
+                if response.status_code == 429:
+                    if retry_count >= MAX_RETRIES:
+                        logger.error(f"Rate limit exceeded after {MAX_RETRIES} retries for {endpoint}")
+                        raise Exception("Rate limit exceeded - max retries reached")
+                    
+                    # Get retry delay from header, default to exponential backoff
+                    retry_after = response.headers.get("Retry-After", str(2 ** retry_count))
+                    wait_time = float(retry_after)
+                    
+                    logger.warning(f"Rate limited on {endpoint}. Waiting {wait_time}s before retry {retry_count + 1}/{MAX_RETRIES}")
+                    await asyncio.sleep(wait_time)
+                    
+                    # Retry with incremented count
+                    return await self._request(method, endpoint, data, retry_count + 1)
+                
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
-                logger.error(f"Coinbase API Error: {e.response.text}")
+                logger.error(f"Coinbase API Error: {e.response.text if hasattr(e, 'response') else str(e)}")
                 raise
             except httpx.RequestError as e:
                 logger.error(f"Network Error: {e}")
-                raise # Re-raise for now so engine knows to try again next tick, but log it clearly
+                raise
 
     async def get_products(self) -> List[Any]:
-        # GET /brokerage/products
+        """Get all available trading products."""
         data = await self._request("GET", "/brokerage/products")
         return data.get("products", [])
 
     async def get_balances(self) -> Dict[str, float]:
-        # GET /brokerage/accounts
+        """Get account balances."""
         data = await self._request("GET", "/brokerage/accounts")
         accounts = data.get("accounts", [])
         
         balances = {}
         for acc in accounts:
-            currency = acc["currency"]
-            available = float(acc["available_balance"]["value"])
-            if available > 0:
+            currency = acc.get("currency")
+            available = float(acc.get("available_balance", {}).get("value", 0))
+            if currency and available > 0:
                 balances[currency] = available
         return balances
 
     async def get_ticker(self, product_id: str) -> float:
-        # 1. Check Cache (WebSocket)
-        cached = self.get_ticker_cached(product_id)
-        if cached:
-            return cached
-
-        # 2. Fallback to REST
-        # GET /brokerage/products/{product_id}
-        # Note: Coinbase API structure might vary, strictly looking for price
+        """Get current price for a product."""
+        # Use the product endpoint to get best bid/ask
         data = await self._request("GET", f"/brokerage/products/{product_id}")
+        
+        # Price from product data
         price = data.get("price")
-        if not price:
-            return 0.0
-        return float(price)
+        if price:
+            return float(price)
+            
+        # Fallback to quote_increment_price or default
+        return float(data.get("quote_increment_price", 0))
+
+    async def get_product_candles(self, product_id: str, start: int, end: int, granularity: str) -> List[Dict]:
+        """
+        Get historical candle data.
+        granularity: ONE_MINUTE, FIVE_MINUTE, FIFTEEN_MINUTE, ONE_HOUR, SIX_HOUR, ONE_DAY
+        timestamps: UNIX timestamp (int)
+        """
+        params = f"?start={start}&end={end}&granularity={granularity}"
+        data = await self._request("GET", f"/brokerage/products/{product_id}/candles{params}")
+        return data.get("candles", [])
 
     async def place_limit_order(self, product_id: str, side: str, price: float, size: float, post_only: bool = True) -> str:
-        # POST /brokerage/orders
-        payload = {
-            "client_order_id": str(uuid.uuid4()),
-            "product_id": product_id,
-            "side": side.upper(),
-            "order_configuration": {
-                "limit_limit_gtc": {
-                    "base_size": str(size),
-                    "limit_price": str(price),
-                    "post_only": post_only
-                }
+        """
+        Place a limit order.
+        Returns the order ID.
+        """
+        client_order_id = str(uuid.uuid4())
+        
+        order_config = {
+            "limit_limit_gtc": {
+                "base_size": str(size),
+                "limit_price": str(round(price, 2)),
+                "post_only": post_only
             }
         }
-        data = await self._request("POST", "/brokerage/orders", payload)
-        # Response: { "success": true, "order_id": "...", ... }
-        if not data.get("success"):
-            error_response = data.get("error_response", {})
-            raise ValueError(f"Order failed: {error_response}")
-            
-        return data.get("order_id")
+        
+        payload = {
+            "client_order_id": client_order_id,
+            "product_id": product_id,
+            "side": side.upper(),
+            "order_configuration": order_config
+        }
+        
+        logger.info(f"Placing {side} order: {size} @ {price} on {product_id}")
+        result = await self._request("POST", "/brokerage/orders", payload)
+        
+        # Extract order ID from response
+        order_id = result.get("order_id") or result.get("success_response", {}).get("order_id")
+        if not order_id:
+            logger.error(f"Failed to get order ID from response: {result}")
+            raise Exception(f"Order placement failed: {result}")
+        
+        logger.info(f"Order placed successfully: {order_id}")
+        return order_id
 
     async def cancel_order(self, order_id: str) -> bool:
-        # POST /brokerage/orders/batch_cancel
-        payload = {"order_ids": [order_id]}
-        data = await self._request("POST", "/brokerage/orders/batch_cancel", payload)
-        results = data.get("results", [])
-        for res in results:
-            if res.get("order_id") == order_id:
-                return res.get("success", False)
-        return False
+        """Cancel an order by ID."""
+        try:
+            payload = {"order_ids": [order_id]}
+            result = await self._request("POST", "/brokerage/orders/batch_cancel", payload)
+            
+            # Check if cancellation was successful
+            results = result.get("results", [])
+            if results:
+                success = results[0].get("success", False)
+                if success:
+                    logger.info(f"Order {order_id} canceled successfully")
+                    return True
+                else:
+                    failure_reason = results[0].get("failure_reason", "Unknown")
+                    logger.warning(f"Failed to cancel order {order_id}: {failure_reason}")
+                    return False
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error canceling order {order_id}: {e}")
+            return False
 
-    async def list_open_orders(self, product_id: Optional[str] = None) -> List[Any]:
-        # GET /brokerage/orders/historical/batch
-        # Need to verify if this is the correct endpoint for OPEN orders.
-        # Advanced Trade API uses "GET /brokerage/orders/historical/batch" with order_status="OPEN"
+    async def list_open_orders(self, product_id: str = None) -> List[Dict]:
+        """List open orders, optionally filtered by product."""
         params = "?order_status=OPEN"
         if product_id:
             params += f"&product_id={product_id}"
-            
+        
         data = await self._request("GET", f"/brokerage/orders/historical/batch{params}")
         return data.get("orders", [])
 
-    async def get_fills(self, since: Optional[Any] = None) -> List[Any]:
-        # GET /brokerage/orders/historical/fills
-        endpoint = "/brokerage/orders/historical/fills"
+    async def get_fills(self, since: float = None) -> List[Dict]:
+        """Get recent fills."""
+        params = ""
         if since:
-            endpoint += f"?start_sequence={since}"
-        data = await self._request("GET", endpoint)
+            params = f"?start_sequence_timestamp={int(since * 1000)}"
+        
+        data = await self._request("GET", f"/brokerage/orders/historical/fills{params}")
         return data.get("fills", [])
 
-    
-    async def _ws_connect(self, channels: List[str], product_ids: List[str], callback: Any):
+    async def stream_fills(self, callback):
+        """Stream fills via WebSocket (not implemented for paper trading)."""
+        logger.warning("WebSocket streaming not implemented for Coinbase adapter")
+        pass
+
+    async def stream_ticker(self, product_ids: List[str], callback):
         """
-        Generic WebSocket connection handler.
+        Stream ticker updates via WebSocket.
+        Subscribes to the public 'ticker' channel on Coinbase Advanced Trade API.
         """
         import websockets
-        WS_URL = "wss://advanced-trade-ws.coinbase.com"
+        uri = "wss://advanced-trade-ws.coinbase.com"
+        
+        logger.info(f"Connecting to Coinbase WS for tickers: {product_ids}")
         
         while True:
             try:
-                async with websockets.connect(WS_URL) as ws:
-                    # 1. Sign
-                    timestamp = str(int(time.time()))
-                    str_to_sign = f"{timestamp}usersselfverify"
-                    signature = hmac.new(
-                        self.api_secret.encode("utf-8"),
-                        str_to_sign.encode("utf-8"),
-                        hashlib.sha256
-                    ).hexdigest()
-                    
-                    # 2. Subscribe
-                    msg = {
+                async with websockets.connect(uri) as websocket:
+                    # Subscribe
+                    subscribe_msg = {
                         "type": "subscribe",
                         "product_ids": product_ids,
-                        "channel": channels[0], # Advanced Trade WS usually takes separate subs or check docs strictly
-                        "signature": signature,
-                        "key": self.api_key,
-                        "timestamp": timestamp,
+                        "channel": "ticker"
                     }
-                    if len(channels) > 1:
-                         # For now, simple support for one channel type per call or loop
-                         pass
-
-                    await ws.send(json.dumps(msg))
-                    logger.info(f"Subscribed to {channels} for {product_ids}")
+                    await websocket.send(json.dumps(subscribe_msg))
+                    logger.info(f"Subscribed to tickers for {len(product_ids)} products")
                     
-                    # 3. Listen
-                    async for message in ws:
-                        data = json.loads(message)
-                        await callback(data)
-                        
+                    async for message in websocket:
+                        try:
+                            data = json.loads(message)
+                            
+                            # Handle different message structures
+                            events = data.get("events", [])
+                            for event in events:
+                                tickers = event.get("tickers", [])
+                                for ticker in tickers:
+                                    if "price" in ticker and "product_id" in ticker:
+                                        fmt_data = {
+                                            "type": "ticker",
+                                            "product_id": ticker["product_id"],
+                                            "price": float(ticker["price"])
+                                        }
+                                        await callback(fmt_data)
+                        except Exception as parse_error:
+                            logger.error(f"WS Parse Error: {parse_error}")
+                            
             except Exception as e:
-                logger.error(f"WebSocket Error: {e}")
-                await asyncio.sleep(5) # Backoff
-
-    def get_ticker_cached(self, product_id: str) -> Optional[float]:
-        """
-        Returns cached price if available.
-        """
-        # We need a shared cache. Initializing it in __init__ is better, 
-        # but for now we'll inject it into the class or use a singleton approach.
-        # Let's add it to __init__ via a separate edit or assume it exists.
-        return getattr(self, "price_cache", {}).get(product_id)
-
-    async def stream_ticker(self, product_ids: List[str], callback: Any) -> None:
-        """
-        Streams ticker updates.
-        """
-        # Ensure cache exists
-        if not hasattr(self, "price_cache"):
-            self.price_cache = {}
-            
-        async def internal_callback(data):
-            # Parse 'ticker' channel events
-            if data.get("channel") == "ticker":
-                events = data.get("events", [])
-                for event in events:
-                    tickers = event.get("tickers", [])
-                    for tick in tickers:
-                        pid = tick["product_id"]
-                        price = float(tick["price"])
-                        self.price_cache[pid] = price
-                        # Forward to external callback if needed
-                        # await callback(pid, price) 
-            
-        await self._ws_connect(["ticker"], product_ids, internal_callback)
-
-    async def stream_fills(self, callback: Any) -> None:
-        """
-        Stream user fills.
-        """
-        async def internal_callback(data):
-            if data.get("channel") == "user":
-                # Check for fills logic
-                pass
-        
-        # User channel doesn't need product_ids usually, but check docs.
-        # For MVP, we reserve this.
-        pass
-
+                logger.error(f"WebSocket Connection Error: {e}")
+                logger.info("Reconnecting to WS in 5 seconds...")
+                await asyncio.sleep(5)

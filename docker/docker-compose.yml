@@ -9,6 +9,8 @@ services:
       - "8000:8000"
     volumes:
       - ../backend:/app
+    env_file:
+      - ../backend/.env
     environment:
       - LIVE_TRADING_ENABLED=false
       - PYTHONPATH=/app
@@ -27,17 +29,3 @@ services:
       - VITE_API_URL=http://localhost:8000
     depends_on:
       - backend
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=gridbot
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-volumes:
-  postgres_data:

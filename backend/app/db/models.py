@@ -78,3 +78,15 @@ class AuditLog(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     action = Column(String, nullable=False) # e.g. "START", "CONFIG_CHANGE"
     details = Column(JSON, nullable=True)
+
+class DailySnapshot(Base):
+    """
+    Stores end-of-day PnL snapshots for historical tracking.
+    Created automatically at end of each trading day.
+    """
+    __tablename__ = "daily_snapshots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(String, unique=True, nullable=False, index=True)  # YYYY-MM-DD format
+    realized_pnl = Column(Float, default=0.0)  # Total realized profit for this day
+    trade_count = Column(Integer, default=0)   # Number of completed trades
+    cumulative_pnl = Column(Float, default=0.0)  # Running total up to this day

@@ -10,7 +10,17 @@ from app.schemas import LotResponse
 router = APIRouter(prefix="/lots", tags=["lots"])
 
 @router.get("/", response_model=List[LotResponse])
-async def list_lots(db: AsyncSession = Depends(get_db)):
+async def list_lots(
+    limit: int = 30, 
+    skip: int = 0, 
+    db: AsyncSession = Depends(get_db)
+):
     # Return all active lots (OPEN)
-    result = await db.execute(select(Lot).where(Lot.status == "OPEN").order_by(Lot.buy_time.desc()))
+    result = await db.execute(
+        select(Lot)
+        .where(Lot.status == "OPEN")
+        .order_by(Lot.buy_time.desc())
+        .limit(limit)
+        .offset(skip)
+    )
     return result.scalars().all()

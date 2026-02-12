@@ -93,7 +93,15 @@ async def stop_market(market_id: str, request: Request, db: AsyncSession = Depen
     # 1. Disable the market
     target.enabled = False
     
-    # 2. Cancel all open orders for this market in the database
+    # 2. Collect open order IDs BEFORE bulk-canceling in DB
+    open_orders_result = await db.execute(
+        select(Order.id)
+        .where(Order.market_id == market_id)
+        .where(Order.status == "OPEN")
+    )
+    open_order_ids = [row[0] for row in open_orders_result.all()]
+    
+    # 3. Cancel all open orders for this market in the database
     await db.execute(
         update(Order)
         .where(Order.market_id == market_id)
@@ -101,21 +109,13 @@ async def stop_market(market_id: str, request: Request, db: AsyncSession = Depen
         .values(status="CANCELED")
     )
     
-    # 3. Cancel orders on the exchange (paper/live)
+    # 4. Cancel orders on the exchange (paper/live)
     if hasattr(request.app.state, "bot_engine") and request.app.state.bot_engine:
-        try:
-            # Get all open orders for this market and cancel each one
-            orders_result = await db.execute(
-                select(Order).where(Order.market_id == market_id).where(Order.status == "CANCELED")
-            )
-            canceled_orders = orders_result.scalars().all()
-            for order in canceled_orders:
-                try:
-                    await request.app.state.bot_engine.adapter.cancel_order(order.id)
-                except Exception:
-                    pass  # Order may already be canceled/filled on exchange
-        except Exception as e:
-            print(f"Failed to cancel orders on exchange: {e}")
+        for order_id in open_order_ids:
+            try:
+                await request.app.state.bot_engine.adapter.cancel_order(order_id)
+            except Exception:
+                pass  # Order may already be canceled/filled on exchange
     
     await db.commit()
     return {"status": "stopped", "market_id": market_id, "orders_canceled": True}

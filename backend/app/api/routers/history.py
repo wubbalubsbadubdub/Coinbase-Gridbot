@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 
 from app.db.session import get_db
 from app.db.models import Fill
@@ -22,10 +22,16 @@ class FillResponse(BaseModel):
 router = APIRouter(prefix="/history", tags=["history"])
 
 @router.get("/fills", response_model=List[FillResponse])
-async def list_fills(market_id: str = None, db: AsyncSession = Depends(get_db)):
+async def list_fills(
+    market_id: Optional[str] = None, 
+    limit: int = 30, 
+    skip: int = 0, 
+    db: AsyncSession = Depends(get_db)
+):
     query = select(Fill).order_by(Fill.timestamp.desc())
     if market_id:
         query = query.where(Fill.market_id == market_id)
     
+    query = query.limit(limit).offset(skip)
     result = await db.execute(query)
     return result.scalars().all()
